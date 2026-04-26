@@ -12,7 +12,7 @@ import (
 )
 
 type model struct {
-	beads  beadsplugin.Model
+	beads  bbt.Model
 	width  int
 	height int
 }
@@ -33,11 +33,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, tea.Quit
 			}
 		}
-	case beadsplugin.BeadAddedMsg:
+	case bbt.BeadAddedMsg:
 		// react
-	case beadsplugin.BeadStatusChangedMsg:
+	case bbt.BeadStatusChangedMsg:
 		// react
-	case beadsplugin.BeadDeletedMsg:
+	case bbt.BeadDeletedMsg:
 		// react
 	}
 
@@ -91,16 +91,16 @@ func (m model) View() tea.View {
 
 func main() {
 	// All defaults:
-	// bp := beadsplugin.New()
+	// bp := bbt.New()
 
 	// Custom config example:
-	km := beadsplugin.DefaultKeyMap()
+	km := bbt.DefaultKeyMap()
 	km.OpenCreate = key.NewBinding(key.WithKeys("f7"), key.WithHelp("f7", "new bead"))
 	km.OpenList = key.NewBinding(key.WithKeys("f8"), key.WithHelp("f8", "list beads"))
 
-	bp := beadsplugin.New(beadsplugin.WithConfig(beadsplugin.Config{
+	bp := bbt.New(bbt.WithConfig(bbt.Config{
 		KeyMap:      &km,
-		Colors:      beadsplugin.Colors{Border: "#7D56F4", Title: "#FF75B5"},
+		Colors:      bbt.Colors{Border: "#7D56F4", Title: "#FF75B5"},
 		Placeholder: "What needs to be done?",
 		CreateIcon:  "✦",
 		ListIcon:    "✦",

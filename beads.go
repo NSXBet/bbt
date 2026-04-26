@@ -1,7 +1,7 @@
-// Package beadsplugin provides a pluggable Bubble Tea component that adds
+// Package bbt provides a pluggable Bubble Tea component that adds
 // a modal todo/bead creation form and a list viewer to any Bubble Tea app.
 // Persists via the `bd` CLI.
-package beadsplugin
+package bbt
 
 import (
 	"encoding/json"
