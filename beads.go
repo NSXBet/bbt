@@ -595,6 +595,24 @@ func (m Model) updateList(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 // View / Overlay
 // ---------------------------------------------------------------------------
 
+// Render returns just the modal panel string without any background.
+// Use this with lipgloss.NewLayer/NewCompositor for transparent overlays.
+// Returns empty string when inactive.
+func (m Model) Render(width int) string {
+	if m.mode == modeInactive {
+		return ""
+	}
+	switch m.mode {
+	case modeCreate:
+		return m.viewCreate(width)
+	case modeList:
+		return m.viewList(width)
+	}
+	return ""
+}
+
+// Overlay renders the modal centered over content (replaces background).
+// For transparent overlays, use Render() with lipgloss layers instead.
 func (m Model) Overlay(content string, width, height int) string {
 	if m.mode == modeInactive {
 		return content
