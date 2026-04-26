@@ -232,6 +232,16 @@ func WithColors(c Colors) Option {
 	}
 }
 
+// WithDemoMode skips bd CLI entirely — beads are in-memory only.
+// Useful for testing the TUI without a beads database.
+func WithDemoMode() Option {
+	return func(m *Model) {
+		m.checked = true
+		m.ready = true
+		m.demoMode = true
+	}
+}
+
 func WithConfig(cfg Config) Option {
 	return func(m *Model) {
 		if cfg.KeyMap != nil {
@@ -343,9 +353,10 @@ type Model struct {
 	createIcon   string
 	listIcon     string
 	errMsg       string
-	checked      bool // bd check done
-	ready        bool // bd available
+	checked      bool
+	ready        bool
 	loading      bool
+	demoMode     bool
 }
 
 func New(opts ...Option) Model {
@@ -469,6 +480,11 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			m.createScroll = 0
 			if m.ready {
 				m.input.SetValue("")
+				if m.demoMode {
+					m.loading = false
+					cmd := m.input.Focus()
+					return m, cmd
+				}
 				m.loading = true
 				cmd := m.input.Focus()
 				return m, tea.Batch(cmd, loadBeads())
@@ -483,6 +499,10 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			m.errMsg = ""
 			m.cursor = 0
 			if m.ready {
+				if m.demoMode {
+					m.loading = false
+					return m, nil
+				}
 				m.loading = true
 				return m, loadBeads()
 			}
@@ -526,6 +546,12 @@ func (m Model) updateCreate(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	if key.Matches(msg, m.keys.Confirm) {
 		title := strings.TrimSpace(m.input.Value())
 		if title != "" {
+			if m.demoMode {
+				b := Bead{ID: fmt.Sprintf("demo-%d", len(m.beads)+1), Title: title, Status: "open", Type: "task"}
+				m.beads = append(m.beads, b)
+				m.input.SetValue("")
+				return m, func() tea.Msg { return BeadAddedMsg{Bead: b} }
+			}
 			return m, func() tea.Msg {
 				b, err := bdCreate(title)
 				if err != nil {
@@ -570,6 +596,11 @@ func (m Model) updateList(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			m.cursor++
 		}
 	case key.Matches(msg, m.keys.NextStatus):
+		if m.demoMode {
+			m.beads[m.cursor].Status = nextStatus(m.beads[m.cursor].Status)
+			bead := m.beads[m.cursor]
+			return m, func() tea.Msg { return BeadStatusChangedMsg{Bead: bead} }
+		}
 		bead := m.beads[m.cursor]
 		next := nextStatus(bead.Status)
 		id := bead.ID
@@ -580,6 +611,14 @@ func (m Model) updateList(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			return beadStatusUpdatedMsg{id: id, status: next}
 		}
 	case key.Matches(msg, m.keys.Delete):
+		if m.demoMode {
+			id := m.beads[m.cursor].ID
+			m.beads = append(m.beads[:m.cursor], m.beads[m.cursor+1:]...)
+			if m.cursor >= len(m.beads) && m.cursor > 0 {
+				m.cursor--
+			}
+			return m, func() tea.Msg { return BeadDeletedMsg{ID: id} }
+		}
 		id := m.beads[m.cursor].ID
 		return m, func() tea.Msg {
 			if err := bdDelete(id); err != nil {
@@ -624,8 +663,25 @@ func (m Model) Overlay(content string, width, height int) string {
 	case modeList:
 		modal = m.viewList(width)
 	}
-	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, modal,
-		lipgloss.WithWhitespaceChars(" "))
+
+	// Fill background to full screen size
+	bg := lipgloss.Place(width, height, lipgloss.Top, lipgloss.Left, content)
+
+	// Layer modal on top, centered
+	panelW := lipgloss.Width(modal)
+	panelH := lipgloss.Height(modal)
+	px := (width - panelW) / 2
+	py := (height - panelH) / 2
+	if px < 0 {
+		px = 0
+	}
+	if py < 0 {
+		py = 0
+	}
+	root := lipgloss.NewLayer(bg)
+	overlay := lipgloss.NewLayer(modal).X(px).Y(py).Z(1)
+	comp := lipgloss.NewCompositor(root, overlay)
+	return comp.Render()
 }
 
 func (m Model) capWidth(preferred, maxWidth int) int {
