@@ -149,7 +149,7 @@ func DefaultColors() Colors {
 		Border: "#7D56F4", Title: "#FF75B5",
 		StatusOpen: "#888888", StatusWIP: "#FFAA00", StatusDone: "#00CC66",
 		DimDark: "#555555", DimLight: "#AAAAAA",
-		SelDark: "#3A3A5C", SelLight: "#E8E8FF",
+		SelDark: "#4A4A6C", SelLight: "#E8E8FF",
 	}
 }
 
@@ -828,18 +828,24 @@ func (m Model) viewList(maxWidth int) string {
 		b.WriteString("\n\n")
 
 		for i, bead := range m.beads {
-			ss := m.statusStyle(bead.Status)
-			icon := ss.Render(statusIcon(bead.Status))
-			status := ss.Render(fmt.Sprintf("%-11s", statusDisplay(bead.Status)))
-			id := m.styles.Dimmed.Render(bead.ID)
-			line := fmt.Sprintf(" %s %s %s %s", icon, status, bead.Title, id)
+			icon := statusIcon(bead.Status)
+			status := fmt.Sprintf("%-11s", statusDisplay(bead.Status))
 
 			if i == m.cursor {
-				line = m.styles.SelectedRow.Render(">" + line)
+				// Plain text, full-width background
+				raw := fmt.Sprintf("> %s %s %s %s", icon, status, bead.Title, bead.ID)
+				padded := raw
+				for len(padded) < w {
+					padded += " "
+				}
+				b.WriteString(m.styles.SelectedRow.Render(padded))
 			} else {
-				line = " " + line
+				ss := m.statusStyle(bead.Status)
+				iconR := ss.Render(icon)
+				statusR := ss.Render(status)
+				idR := m.styles.Dimmed.Render(bead.ID)
+				b.WriteString(fmt.Sprintf("  %s %s %s %s", iconR, statusR, bead.Title, idR))
 			}
-			b.WriteString(line)
 			if i < len(m.beads)-1 {
 				b.WriteString("\n")
 			}
