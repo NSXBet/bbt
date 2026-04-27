@@ -1,6 +1,19 @@
-// Package bbt provides a pluggable Bubble Tea component that adds
-// a modal todo/bead creation form and a list viewer to any Bubble Tea app.
-// Persists via the `bd` CLI.
+// Package bbt provides a pluggable [Bubble Tea v2] modal component for managing
+// beads (todo items) within any TUI application.
+//
+// Data is persisted through the bd CLI (github.com/steveyegge/beads). The
+// component renders as a centered overlay modal with two views: a create form
+// and a list view with status cycling and deletion.
+//
+// Add bbt to any Bubble Tea app in three steps:
+//
+//  1. Embed [Model] in your app's model and call [New] with options.
+//  2. Forward messages via [Model.Update] and short-circuit when [Model.Active].
+//  3. Render with [Model.Overlay] or [Model.Render] in your View function.
+//
+// Use [WithDemoMode] to skip persistence for UI testing.
+//
+// [Bubble Tea v2]: https://charm.land/bubbletea
 package bbt
 
 import (
@@ -17,9 +30,17 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// Bead — maps to bd JSON output
+// Bead
 // ---------------------------------------------------------------------------
 
+// Status constants matching bd's status values.
+const (
+	StatusOpen       = "open"
+	StatusInProgress = "in_progress"
+	StatusClosed     = "closed"
+)
+
+// Bead represents a single work item as returned by the bd CLI.
 type Bead struct {
 	ID        string `json:"id"`
 	Title     string `json:"title"`
@@ -31,11 +52,11 @@ type Bead struct {
 
 func statusIcon(s string) string {
 	switch s {
-	case "open":
+	case StatusOpen:
 		return "○"
-	case "in_progress":
+	case StatusInProgress:
 		return "◑"
-	case "closed":
+	case StatusClosed:
 		return "●"
 	default:
 		return "?"
@@ -44,7 +65,7 @@ func statusIcon(s string) string {
 
 func statusDisplay(s string) string {
 	switch s {
-	case "in_progress":
+	case StatusInProgress:
 		return "in-progress"
 	default:
 		return s
@@ -53,19 +74,19 @@ func statusDisplay(s string) string {
 
 func nextStatus(s string) string {
 	switch s {
-	case "open":
-		return "in_progress"
-	case "in_progress":
-		return "closed"
-	case "closed":
-		return "open"
+	case StatusOpen:
+		return StatusInProgress
+	case StatusInProgress:
+		return StatusClosed
+	case StatusClosed:
+		return StatusOpen
 	default:
-		return "open"
+		return StatusOpen
 	}
 }
 
 // ---------------------------------------------------------------------------
-// bd CLI helpers
+// bd CLI
 // ---------------------------------------------------------------------------
 
 func bdRun(args ...string) ([]byte, error) {
@@ -91,7 +112,7 @@ func bdList() ([]Bead, error) {
 	}
 	var beads []Bead
 	if err := json.Unmarshal(out, &beads); err != nil {
-		return nil, fmt.Errorf("parse: %w", err)
+		return nil, fmt.Errorf("parsing bd list output: %w", err)
 	}
 	return beads, nil
 }
@@ -103,20 +124,20 @@ func bdCreate(title string) (*Bead, error) {
 	}
 	var b Bead
 	if err := json.Unmarshal(out, &b); err != nil {
-		return nil, fmt.Errorf("parse: %w", err)
+		return nil, fmt.Errorf("parsing bd create output: %w", err)
 	}
 	return &b, nil
 }
 
 func bdSetStatus(id, status string) error {
 	switch status {
-	case "in_progress":
+	case StatusInProgress:
 		_, err := bdRun("update", id, "--claim", "--json")
 		return err
-	case "closed":
+	case StatusClosed:
 		_, err := bdRun("close", id, "--json")
 		return err
-	case "open":
+	case StatusOpen:
 		_, err := bdRun("reopen", id, "--json")
 		return err
 	}
@@ -129,27 +150,35 @@ func bdDelete(id string) error {
 }
 
 // ---------------------------------------------------------------------------
-// Config
+// Configuration
 // ---------------------------------------------------------------------------
 
+// Colors holds hex color strings for the modal UI.
+// Any zero-value field falls back to [DefaultColors].
 type Colors struct {
-	Border     string
-	Title      string
-	StatusOpen string
-	StatusWIP  string
-	StatusDone string
-	DimDark    string
-	DimLight   string
-	SelDark    string
-	SelLight   string
+	Border     string // Modal border color.
+	Title      string // Modal title text color.
+	StatusOpen string // Open status indicator color.
+	StatusWIP  string // In-progress status indicator color.
+	StatusDone string // Closed/done status indicator color.
+	DimDark    string // Muted text on dark backgrounds.
+	DimLight   string // Muted text on light backgrounds.
+	SelDark    string // Selected row background on dark terminals.
+	SelLight   string // Selected row background on light terminals.
 }
 
+// DefaultColors returns the built-in color palette.
 func DefaultColors() Colors {
 	return Colors{
-		Border: "#7D56F4", Title: "#FF75B5",
-		StatusOpen: "#888888", StatusWIP: "#FFAA00", StatusDone: "#00CC66",
-		DimDark: "#555555", DimLight: "#AAAAAA",
-		SelDark: "#4A4A6C", SelLight: "#E8E8FF",
+		Border:     "#7D56F4",
+		Title:      "#FF75B5",
+		StatusOpen: "#888888",
+		StatusWIP:  "#FFAA00",
+		StatusDone: "#00CC66",
+		DimDark:    "#555555",
+		DimLight:   "#AAAAAA",
+		SelDark:    "#4A4A6C",
+		SelLight:   "#E8E8FF",
 	}
 }
 
@@ -172,19 +201,23 @@ func (c Colors) withDefaults() Colors {
 	return c
 }
 
+// Config groups all configuration for the bbt component.
 type Config struct {
-	KeyMap      *KeyMap
-	Colors      Colors
-	Placeholder string
-	ModalWidth  int
-	CreateIcon  string
-	ListIcon    string
+	KeyMap      *KeyMap // Nil uses [DefaultKeyMap].
+	Colors      Colors  // Zero fields fall back to [DefaultColors].
+	Placeholder string  // Text input placeholder (default: "What needs to be done?").
+	ModalWidth  int     // Maximum modal width; 0 means auto.
+	CreateIcon  string  // Glyph before create modal title.
+	ListIcon    string  // Glyph before list modal title.
 }
 
+// DefaultConfig returns the built-in configuration.
 func DefaultConfig() Config {
 	return Config{
-		Colors: DefaultColors(), Placeholder: "What needs to be done?",
-		CreateIcon: "✦", ListIcon: "✦",
+		Colors:      DefaultColors(),
+		Placeholder: "What needs to be done?",
+		CreateIcon:  "✦",
+		ListIcon:    "✦",
 	}
 }
 
@@ -192,17 +225,20 @@ func DefaultConfig() Config {
 // KeyMap
 // ---------------------------------------------------------------------------
 
+// KeyMap defines all keybindings for the bbt component.
+// Use [DefaultKeyMap] as a starting point and override individual bindings.
 type KeyMap struct {
-	OpenCreate key.Binding
-	OpenList   key.Binding
-	Confirm    key.Binding
-	Cancel     key.Binding
-	NextStatus key.Binding
-	Delete     key.Binding
-	MoveUp     key.Binding
-	MoveDown   key.Binding
+	OpenCreate key.Binding // Open the create modal.
+	OpenList   key.Binding // Open the list modal.
+	Confirm    key.Binding // Confirm input / create bead.
+	Cancel     key.Binding // Close modal.
+	NextStatus key.Binding // Cycle status in list view.
+	Delete     key.Binding // Delete selected bead in list view.
+	MoveUp     key.Binding // Move cursor up in list view.
+	MoveDown   key.Binding // Move cursor down in list view.
 }
 
+// DefaultKeyMap returns the built-in keybindings.
 func DefaultKeyMap() KeyMap {
 	return KeyMap{
 		OpenCreate: key.NewBinding(key.WithKeys("f7"), key.WithHelp("f7", "new bead")),
@@ -217,14 +253,19 @@ func DefaultKeyMap() KeyMap {
 }
 
 // ---------------------------------------------------------------------------
-// Functional options
+// Options
 // ---------------------------------------------------------------------------
 
+// Option configures [New].
 type Option func(*Model)
 
-func WithKeyMap(km KeyMap) Option     { return func(m *Model) { m.keys = km } }
+// WithKeyMap overrides the full keymap.
+func WithKeyMap(km KeyMap) Option { return func(m *Model) { m.keys = km } }
+
+// WithPlaceholder sets the create-modal input placeholder text.
 func WithPlaceholder(s string) Option { return func(m *Model) { m.input.Placeholder = s } }
 
+// WithColors overrides the color palette. Zero-value fields keep defaults.
 func WithColors(c Colors) Option {
 	return func(m *Model) {
 		m.colors = c.withDefaults()
@@ -232,8 +273,8 @@ func WithColors(c Colors) Option {
 	}
 }
 
-// WithDemoMode skips bd CLI entirely — beads are in-memory only.
-// Useful for testing the TUI without a beads database.
+// WithDemoMode disables bd CLI calls entirely. Beads are stored in-memory
+// only, making this useful for testing or recording demos.
 func WithDemoMode() Option {
 	return func(m *Model) {
 		m.checked = true
@@ -242,6 +283,7 @@ func WithDemoMode() Option {
 	}
 }
 
+// WithConfig applies a full [Config]. Nil KeyMap fields keep defaults.
 func WithConfig(cfg Config) Option {
 	return func(m *Model) {
 		if cfg.KeyMap != nil {
@@ -263,19 +305,19 @@ func WithConfig(cfg Config) Option {
 }
 
 // ---------------------------------------------------------------------------
-// Styles
+// Styles (internal)
 // ---------------------------------------------------------------------------
 
 type styles struct {
-	Modal       lipgloss.Style
-	Title       lipgloss.Style
-	SelectedRow lipgloss.Style
-	StatusOpen  lipgloss.Style
-	StatusWIP   lipgloss.Style
-	StatusDone  lipgloss.Style
-	Help        lipgloss.Style
-	Dimmed      lipgloss.Style
-	Error       lipgloss.Style
+	modal       lipgloss.Style
+	title       lipgloss.Style
+	selectedRow lipgloss.Style
+	statusOpen  lipgloss.Style
+	statusWIP   lipgloss.Style
+	statusDone  lipgloss.Style
+	help        lipgloss.Style
+	dimmed      lipgloss.Style
+	errText     lipgloss.Style
 }
 
 func buildStyles(c Colors, isDark bool) styles {
@@ -288,20 +330,32 @@ func buildStyles(c Colors, isDark bool) styles {
 		sel = lipgloss.Color(c.SelLight)
 	}
 	return styles{
-		Modal: lipgloss.NewStyle().
+		modal: lipgloss.NewStyle().
 			Border(lipgloss.RoundedBorder()).
 			BorderForeground(lipgloss.Color(c.Border)).
 			Padding(1, 2),
-		Title: lipgloss.NewStyle().
+		title: lipgloss.NewStyle().
 			Foreground(lipgloss.Color(c.Title)).
-			Bold(true).MarginBottom(1),
-		SelectedRow: lipgloss.NewStyle().Background(sel),
-		StatusOpen:  lipgloss.NewStyle().Foreground(lipgloss.Color(c.StatusOpen)),
-		StatusWIP:   lipgloss.NewStyle().Foreground(lipgloss.Color(c.StatusWIP)),
-		StatusDone:  lipgloss.NewStyle().Foreground(lipgloss.Color(c.StatusDone)),
-		Help:        lipgloss.NewStyle().Foreground(dim).MarginTop(1),
-		Dimmed:      lipgloss.NewStyle().Foreground(dim),
-		Error:       lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444")).Bold(true),
+			Bold(true).
+			MarginBottom(1),
+		selectedRow: lipgloss.NewStyle().Background(sel),
+		statusOpen:  lipgloss.NewStyle().Foreground(lipgloss.Color(c.StatusOpen)),
+		statusWIP:   lipgloss.NewStyle().Foreground(lipgloss.Color(c.StatusWIP)),
+		statusDone:  lipgloss.NewStyle().Foreground(lipgloss.Color(c.StatusDone)),
+		help:        lipgloss.NewStyle().Foreground(dim).MarginTop(1),
+		dimmed:      lipgloss.NewStyle().Foreground(dim),
+		errText:     lipgloss.NewStyle().Foreground(lipgloss.Color("#FF4444")).Bold(true),
+	}
+}
+
+func (s styles) statusStyle(status string) lipgloss.Style {
+	switch status {
+	case StatusInProgress:
+		return s.statusWIP
+	case StatusClosed:
+		return s.statusDone
+	default:
+		return s.statusOpen
 	}
 }
 
@@ -309,37 +363,42 @@ func buildStyles(c Colors, isDark bool) styles {
 // Messages
 // ---------------------------------------------------------------------------
 
-// Public — host app can react to these
+// BeadAddedMsg is emitted when a new bead is created successfully.
 type BeadAddedMsg struct{ Bead Bead }
+
+// BeadStatusChangedMsg is emitted when a bead's status is cycled.
 type BeadStatusChangedMsg struct{ Bead Bead }
+
+// BeadDeletedMsg is emitted when a bead is deleted.
 type BeadDeletedMsg struct{ ID string }
 
-// Internal
-type beadsLoadedMsg struct{ beads []Bead }
-type bdErrorMsg struct{ err string }
-type bdCheckDoneMsg struct{ err error }
-type beadCreatedMsg struct{ bead Bead }
-type beadStatusUpdatedMsg struct {
-	id     string
-	status string
-}
-type beadDeletedInternalMsg struct{ id string }
+// Internal messages — not exported.
+type (
+	beadsLoadedMsg        struct{ beads []Bead }
+	bdErrorMsg            struct{ err string }
+	bdCheckDoneMsg        struct{ err error }
+	beadCreatedMsg        struct{ bead Bead }
+	beadStatusUpdatedMsg  struct{ id, status string }
+	beadDeletedInternalMsg struct{ id string }
+)
 
 // ---------------------------------------------------------------------------
 // Model
 // ---------------------------------------------------------------------------
 
-type mode int
+type viewMode int
 
 const (
-	modeInactive mode = iota
+	modeInactive viewMode = iota
 	modeCreate
 	modeList
 )
 
+// Model is the bbt Bubble Tea component. Embed it in your application model
+// and forward messages via [Model.Update].
 type Model struct {
 	beads        []Bead
-	mode         mode
+	mode         viewMode
 	input        textinput.Model
 	cursor       int
 	createScroll int
@@ -353,12 +412,14 @@ type Model struct {
 	createIcon   string
 	listIcon     string
 	errMsg       string
-	checked      bool
-	ready        bool
-	loading      bool
-	demoMode     bool
+	checked      bool // bd availability check completed
+	ready        bool // bd is available
+	loading      bool // async operation in flight
+	demoMode     bool // skip bd, in-memory only
 }
 
+// New creates a bbt component with the given options.
+// Call [Model.Init] from your application's Init to check bd availability.
 func New(opts ...Option) Model {
 	ti := textinput.New()
 	ti.Placeholder = "What needs to be done?"
@@ -369,9 +430,13 @@ func New(opts ...Option) Model {
 
 	c := DefaultColors()
 	m := Model{
-		keys: DefaultKeyMap(), input: ti, colors: c,
-		isDark: true, styles: buildStyles(c, true),
-		createIcon: "✦", listIcon: "✦",
+		keys:       DefaultKeyMap(),
+		input:      ti,
+		colors:     c,
+		isDark:     true,
+		styles:     buildStyles(c, true),
+		createIcon: "✦",
+		listIcon:   "✦",
 	}
 	for _, opt := range opts {
 		opt(&m)
@@ -379,17 +444,28 @@ func New(opts ...Option) Model {
 	return m
 }
 
-// Init checks if bd is available. Batch with your own Init commands.
+// Init returns a command that verifies bd availability.
+// Batch this with your application's own Init commands.
 func (m Model) Init() tea.Cmd {
 	return func() tea.Msg {
 		return bdCheckDoneMsg{err: bdCheck()}
 	}
 }
 
-func (m Model) Active() bool  { return m.mode != modeInactive }
+// Active reports whether a modal is currently open.
+// When true, the host application should not process key events.
+func (m Model) Active() bool { return m.mode != modeInactive }
+
+// Beads returns the current in-memory bead list.
 func (m Model) Beads() []Bead { return m.beads }
 
-func (m *Model) SetSize(w, h int) { m.width = w; m.height = h }
+// SetSize updates the available terminal dimensions for overlay positioning.
+func (m *Model) SetSize(w, h int) {
+	m.width = w
+	m.height = h
+}
+
+// SetDark switches between dark and light color schemes.
 func (m *Model) SetDark(isDark bool) {
 	m.isDark = isDark
 	m.styles = buildStyles(m.colors, isDark)
@@ -399,11 +475,14 @@ func (m *Model) SetDark(isDark bool) {
 // Update
 // ---------------------------------------------------------------------------
 
+// Update processes a Bubble Tea message. Call this from your app's Update
+// and check [Model.Active] to decide whether to swallow further input.
 func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+
 	case tea.BackgroundColorMsg:
 		m.SetDark(msg.IsDark())
 
@@ -458,7 +537,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m.handleKey(msg)
 	}
 
-	// Forward non-key messages to textinput (cursor blink)
+	// Forward non-key messages to textinput (cursor blink, etc.).
 	if m.mode == modeCreate && m.ready {
 		var cmd tea.Cmd
 		m.input, cmd = m.input.Update(msg)
@@ -482,12 +561,11 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 				m.input.SetValue("")
 				if m.demoMode {
 					m.loading = false
-					cmd := m.input.Focus()
-					return m, cmd
+					return m, m.input.Focus()
 				}
 				m.loading = true
 				cmd := m.input.Focus()
-				return m, tea.Batch(cmd, loadBeads())
+				return m, tea.Batch(cmd, loadBeadsCmd())
 			}
 			return m, nil
 
@@ -504,14 +582,14 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 					return m, nil
 				}
 				m.loading = true
-				return m, loadBeads()
+				return m, loadBeadsCmd()
 			}
 			return m, nil
 		}
 		return m, nil
 	}
 
-	// Cancel from any modal
+	// Cancel closes any open modal.
 	if key.Matches(msg, m.keys.Cancel) {
 		m.mode = modeInactive
 		m.errMsg = ""
@@ -528,7 +606,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	return m, nil
 }
 
-func loadBeads() tea.Cmd {
+func loadBeadsCmd() tea.Cmd {
 	return func() tea.Msg {
 		beads, err := bdList()
 		if err != nil {
@@ -545,25 +623,30 @@ func (m Model) updateCreate(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 
 	if key.Matches(msg, m.keys.Confirm) {
 		title := strings.TrimSpace(m.input.Value())
-		if title != "" {
-			if m.demoMode {
-				b := Bead{ID: fmt.Sprintf("demo-%d", len(m.beads)+1), Title: title, Status: "open", Type: "task"}
-				m.beads = append(m.beads, b)
-				m.input.SetValue("")
-				return m, func() tea.Msg { return BeadAddedMsg{Bead: b} }
-			}
-			return m, func() tea.Msg {
-				b, err := bdCreate(title)
-				if err != nil {
-					return bdErrorMsg{err: err.Error()}
-				}
-				return beadCreatedMsg{bead: *b}
-			}
+		if title == "" {
+			return m, nil
 		}
-		return m, nil
+		if m.demoMode {
+			b := Bead{
+				ID:     fmt.Sprintf("demo-%d", len(m.beads)+1),
+				Title:  title,
+				Status: StatusOpen,
+				Type:   "task",
+			}
+			m.beads = append(m.beads, b)
+			m.input.SetValue("")
+			return m, func() tea.Msg { return BeadAddedMsg{Bead: b} }
+		}
+		return m, func() tea.Msg {
+			b, err := bdCreate(title)
+			if err != nil {
+				return bdErrorMsg{err: err.Error()}
+			}
+			return beadCreatedMsg{bead: *b}
+		}
 	}
 
-	// Scroll the existing beads list
+	// Scroll existing beads list with arrow keys.
 	switch msg.String() {
 	case "up":
 		if m.createScroll > 0 {
@@ -575,7 +658,7 @@ func (m Model) updateCreate(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Forward everything else to textinput
+	// Forward remaining keys to textinput.
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	return m, cmd
@@ -631,12 +714,12 @@ func (m Model) updateList(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 }
 
 // ---------------------------------------------------------------------------
-// View / Overlay
+// View
 // ---------------------------------------------------------------------------
 
-// Render returns just the modal panel string without any background.
+// Render returns the modal panel string without any background.
 // Use this with lipgloss.NewLayer/NewCompositor for transparent overlays.
-// Returns empty string when inactive.
+// Returns an empty string when no modal is active.
 func (m Model) Render(width int) string {
 	if m.mode == modeInactive {
 		return ""
@@ -650,12 +733,14 @@ func (m Model) Render(width int) string {
 	return ""
 }
 
-// Overlay renders the modal centered over content (replaces background).
-// For transparent overlays, use Render() with lipgloss layers instead.
+// Overlay renders the modal centered over content using lipgloss layers.
+// The background content remains visible around and behind the modal.
+// Returns content unchanged when no modal is active.
 func (m Model) Overlay(content string, width, height int) string {
 	if m.mode == modeInactive {
 		return content
 	}
+
 	var modal string
 	switch m.mode {
 	case modeCreate:
@@ -664,10 +749,8 @@ func (m Model) Overlay(content string, width, height int) string {
 		modal = m.viewList(width)
 	}
 
-	// Fill background to full screen size
 	bg := lipgloss.Place(width, height, lipgloss.Top, lipgloss.Left, content)
 
-	// Layer modal on top, centered
 	panelW := lipgloss.Width(modal)
 	panelH := lipgloss.Height(modal)
 	px := (width - panelW) / 2
@@ -678,10 +761,10 @@ func (m Model) Overlay(content string, width, height int) string {
 	if py < 0 {
 		py = 0
 	}
+
 	root := lipgloss.NewLayer(bg)
 	overlay := lipgloss.NewLayer(modal).X(px).Y(py).Z(1)
-	comp := lipgloss.NewCompositor(root, overlay)
-	return comp.Render()
+	return lipgloss.NewCompositor(root, overlay).Render()
 }
 
 func (m Model) capWidth(preferred, maxWidth int) int {
@@ -703,7 +786,7 @@ func (m Model) viewCreate(maxWidth int) string {
 	w := m.capWidth(55, maxWidth)
 	var b strings.Builder
 
-	b.WriteString(m.styles.Title.Render(m.createIcon + " New Bead"))
+	b.WriteString(m.styles.title.Render(m.createIcon + " New Bead"))
 	b.WriteString("\n")
 
 	if !m.ready {
@@ -711,51 +794,42 @@ func (m Model) viewCreate(maxWidth int) string {
 		if errText == "" {
 			errText = "Checking beads..."
 		}
-		b.WriteString(m.styles.Error.Render(errText))
+		b.WriteString(m.styles.errText.Render(errText))
 		b.WriteString("\n")
-		b.WriteString(m.styles.Help.Render("esc: close"))
-		return m.styles.Modal.Width(w).Render(b.String())
+		b.WriteString(m.styles.help.Render("esc: close"))
+		return m.styles.modal.Width(w).Render(b.String())
 	}
 
 	if m.errMsg != "" {
-		b.WriteString(m.styles.Error.Render(m.errMsg))
+		b.WriteString(m.styles.errText.Render(m.errMsg))
 		b.WriteString("\n")
 	}
 
 	b.WriteString(m.input.View())
 	b.WriteString("\n")
 
-	// Existing beads below input
+	// Existing beads below input.
 	if m.loading {
-		b.WriteString(m.styles.Dimmed.Render("  Loading..."))
+		b.WriteString(m.styles.dimmed.Render("  Loading..."))
 	} else if len(m.beads) > 0 {
 		var nOpen, nWIP, nClosed int
 		for _, bead := range m.beads {
 			switch bead.Status {
-			case "open":
+			case StatusOpen:
 				nOpen++
-			case "in_progress":
+			case StatusInProgress:
 				nWIP++
-			case "closed":
+			case StatusClosed:
 				nClosed++
 			}
 		}
 		b.WriteString("\n")
-		b.WriteString(m.styles.Dimmed.Render(fmt.Sprintf("  %d beads (%d open, %d wip, %d done)", len(m.beads), nOpen, nWIP, nClosed)))
+		b.WriteString(m.styles.dimmed.Render(
+			fmt.Sprintf("  %d beads (%d open, %d wip, %d done)", len(m.beads), nOpen, nWIP, nClosed),
+		))
 		b.WriteString("\n")
 
-		maxVisible := 8
-		if m.height > 0 {
-			v := (m.height - 16)
-			if v < 4 {
-				v = 4
-			}
-			if v > 12 {
-				v = 12
-			}
-			maxVisible = v
-		}
-
+		maxVisible := clamp((m.height-16), 4, 12)
 		start := m.createScroll
 		if start > len(m.beads)-maxVisible {
 			start = max(0, len(m.beads)-maxVisible)
@@ -766,29 +840,29 @@ func (m Model) viewCreate(maxWidth int) string {
 		}
 
 		if start > 0 {
-			b.WriteString(m.styles.Dimmed.Render("  ↑ more"))
+			b.WriteString(m.styles.dimmed.Render("  ↑ more"))
 			b.WriteString("\n")
 		}
 		for i := start; i < end; i++ {
 			bead := m.beads[i]
-			ss := m.statusStyle(bead.Status)
+			ss := m.styles.statusStyle(bead.Status)
 			b.WriteString(fmt.Sprintf("  %s %s\n", ss.Render(statusIcon(bead.Status)), bead.Title))
 		}
 		if end < len(m.beads) {
-			b.WriteString(m.styles.Dimmed.Render("  ↓ more"))
+			b.WriteString(m.styles.dimmed.Render("  ↓ more"))
 		}
 	}
 
 	b.WriteString("\n")
-	b.WriteString(m.styles.Help.Render("enter: add  •  ↑↓: scroll  •  esc: close"))
-	return m.styles.Modal.Width(w).Render(b.String())
+	b.WriteString(m.styles.help.Render("enter: add  •  ↑↓: scroll  •  esc: close"))
+	return m.styles.modal.Width(w).Render(b.String())
 }
 
 func (m Model) viewList(maxWidth int) string {
 	w := m.capWidth(60, maxWidth)
 	var b strings.Builder
 
-	b.WriteString(m.styles.Title.Render(m.listIcon + " Beads"))
+	b.WriteString(m.styles.title.Render(m.listIcon + " Beads"))
 	b.WriteString("\n")
 
 	if !m.ready {
@@ -796,35 +870,39 @@ func (m Model) viewList(maxWidth int) string {
 		if errText == "" {
 			errText = "Checking beads..."
 		}
-		b.WriteString(m.styles.Error.Render(errText))
+		b.WriteString(m.styles.errText.Render(errText))
 		b.WriteString("\n")
-		b.WriteString(m.styles.Help.Render("esc: close"))
-		return m.styles.Modal.Width(w).Render(b.String())
+		b.WriteString(m.styles.help.Render("esc: close"))
+		return m.styles.modal.Width(w).Render(b.String())
 	}
 
 	if m.errMsg != "" {
-		b.WriteString(m.styles.Error.Render(m.errMsg))
+		b.WriteString(m.styles.errText.Render(m.errMsg))
 		b.WriteString("\n")
 	}
 
 	if m.loading {
-		b.WriteString(m.styles.Dimmed.Render("  Loading..."))
+		b.WriteString(m.styles.dimmed.Render("  Loading..."))
 	} else if len(m.beads) == 0 {
-		b.WriteString(m.styles.Dimmed.Render("  No beads yet. Press " + m.keys.OpenCreate.Help().Key + " to create one."))
+		b.WriteString(m.styles.dimmed.Render(
+			"  No beads yet. Press " + m.keys.OpenCreate.Help().Key + " to create one.",
+		))
 	} else {
-		// Stats line
+		// Stats line.
 		var nOpen, nWIP, nClosed int
 		for _, bead := range m.beads {
 			switch bead.Status {
-			case "open":
+			case StatusOpen:
 				nOpen++
-			case "in_progress":
+			case StatusInProgress:
 				nWIP++
-			case "closed":
+			case StatusClosed:
 				nClosed++
 			}
 		}
-		b.WriteString(m.styles.Dimmed.Render(fmt.Sprintf("  Total: %d issues (%d open, %d in progress, %d closed)", len(m.beads), nOpen, nWIP, nClosed)))
+		b.WriteString(m.styles.dimmed.Render(
+			fmt.Sprintf("  Total: %d issues (%d open, %d in progress, %d closed)", len(m.beads), nOpen, nWIP, nClosed),
+		))
 		b.WriteString("\n\n")
 
 		for i, bead := range m.beads {
@@ -832,18 +910,16 @@ func (m Model) viewList(maxWidth int) string {
 			status := fmt.Sprintf("%-11s", statusDisplay(bead.Status))
 
 			if i == m.cursor {
-				// Plain text, full-width background
 				raw := fmt.Sprintf("> %s %s %s %s", icon, status, bead.Title, bead.ID)
-				padded := raw
-				for len(padded) < w {
-					padded += " "
+				for len(raw) < w {
+					raw += " "
 				}
-				b.WriteString(m.styles.SelectedRow.Render(padded))
+				b.WriteString(m.styles.selectedRow.Render(raw))
 			} else {
-				ss := m.statusStyle(bead.Status)
+				ss := m.styles.statusStyle(bead.Status)
 				iconR := ss.Render(icon)
 				statusR := ss.Render(status)
-				idR := m.styles.Dimmed.Render(bead.ID)
+				idR := m.styles.dimmed.Render(bead.ID)
 				b.WriteString(fmt.Sprintf("  %s %s %s %s", iconR, statusR, bead.Title, idR))
 			}
 			if i < len(m.beads)-1 {
@@ -859,24 +935,27 @@ func (m Model) viewList(maxWidth int) string {
 		m.keys.Delete.Help().Key + ": delete",
 		m.keys.Cancel.Help().Key + ": close",
 	}
-	b.WriteString(m.styles.Help.Render(strings.Join(helpParts, "  •  ")))
-	return m.styles.Modal.Width(w).Render(b.String())
+	b.WriteString(m.styles.help.Render(strings.Join(helpParts, "  •  ")))
+	return m.styles.modal.Width(w).Render(b.String())
 }
 
-func (m Model) statusStyle(s string) lipgloss.Style {
-	switch s {
-	case "in_progress":
-		return m.styles.StatusWIP
-	case "closed":
-		return m.styles.StatusDone
-	default:
-		return m.styles.StatusOpen
-	}
-}
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
 
 func max(a, b int) int {
 	if a > b {
 		return a
 	}
 	return b
+}
+
+func clamp(v, lo, hi int) int {
+	if v < lo {
+		return lo
+	}
+	if v > hi {
+		return hi
+	}
+	return v
 }

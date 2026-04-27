@@ -1,0 +1,17 @@
+linters:
+  enable:
+    - errcheck
+    - govet
+    - staticcheck
+    - unused
+    - ineffassign
+    - misspell
+    - gofmt
+    - goimports
+
+linters-settings:
+  misspell:
+    locale: US
+
+issues:
+  exclude-use-default: false
