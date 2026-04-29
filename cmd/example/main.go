@@ -73,8 +73,8 @@ func (m model) View() tea.View {
 	)
 
 	help := lipgloss.NewStyle().Foreground(lipgloss.Color("#555555")).Render(
-		"  ctrl+9  Create a bead\n" +
-			"  ctrl+0  List beads\n" +
+		"  f1      Create a bead\n" +
+			"  f2      List beads\n" +
 			"  q       Quit",
 	)
 
@@ -95,8 +95,8 @@ func main() {
 
 	// Custom config example:
 	km := bbt.DefaultKeyMap()
-	km.OpenCreate = key.NewBinding(key.WithKeys("ctrl+9"), key.WithHelp("ctrl+9", "new bead"))
-	km.OpenList = key.NewBinding(key.WithKeys("ctrl+0"), key.WithHelp("ctrl+0", "list beads"))
+	km.OpenCreate = key.NewBinding(key.WithKeys("f1"), key.WithHelp("f1", "new bead"))
+	km.OpenList = key.NewBinding(key.WithKeys("f2"), key.WithHelp("f2", "list beads"))
 
 	bp := bbt.New(bbt.WithConfig(bbt.Config{
 		KeyMap:      &km,

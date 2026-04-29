@@ -4,8 +4,8 @@ A pluggable [Bubble Tea v2](https://charm.land/bubbletea) component that adds a 
 
 ## Features
 
-- **Ctrl+9** opens a create modal with Title, Description, and Priority fields
-- **Ctrl+0** opens a list modal with status cycling, deletion, and navigation
+- **F1** opens a create modal with Title, Description, and Priority fields
+- **F2** opens a list modal with status cycling, deletion, and navigation
 - All data persisted through `bd` CLI — shows up in `bd list`
 - Fully configurable keybinds and colors
 - Transparent overlay — background content visible behind modal
@@ -127,8 +127,8 @@ bp := bbt.New(bbt.WithDemoMode())
 
 | Key | Action |
 |-----|--------|
-| `ctrl+9` | Open create modal |
-| `ctrl+0` | Open list modal |
+| `f1` | Open create modal |
+| `f2` | Open list modal |
 | `enter` | Confirm / create bead |
 | `esc` | Close modal |
 | `↑/↓` or `k/j` | Navigate list |
