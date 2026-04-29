@@ -21,10 +21,12 @@ import (
 	"fmt"
 	"image/color"
 	"os/exec"
+	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/textinput"
 	lipgloss "charm.land/lipgloss/v2"
 )
@@ -117,8 +119,15 @@ func bdList() ([]Bead, error) {
 	return beads, nil
 }
 
-func bdCreate(title string) (*Bead, error) {
-	out, err := bdRun("create", title, "-t", "task", "--json")
+func bdCreate(title, description, priority string) (*Bead, error) {
+	args := []string{"create", title, "-t", "task", "--json"}
+	if description != "" {
+		args = append(args, "-d", description)
+	}
+	if priority != "" {
+		args = append(args, "-p", priority)
+	}
+	out, err := bdRun(args...)
 	if err != nil {
 		return nil, err
 	}
@@ -203,21 +212,27 @@ func (c Colors) withDefaults() Colors {
 
 // Config groups all configuration for the bbt component.
 type Config struct {
-	KeyMap      *KeyMap // Nil uses [DefaultKeyMap].
-	Colors      Colors  // Zero fields fall back to [DefaultColors].
-	Placeholder string  // Text input placeholder (default: "What needs to be done?").
-	ModalWidth  int     // Maximum modal width; 0 means auto.
-	CreateIcon  string  // Glyph before create modal title.
-	ListIcon    string  // Glyph before list modal title.
+	KeyMap                 *KeyMap // Nil uses [DefaultKeyMap].
+	Colors                 Colors  // Zero fields fall back to [DefaultColors].
+	Placeholder            string  // Title input placeholder (default: "What needs to be done?").
+	DescriptionPlaceholder string  // Description textarea placeholder.
+	PriorityPlaceholder    string  // Priority input placeholder.
+	DescriptionHeight      int     // Description textarea height in rows (default: 6).
+	ModalWidth             int     // Maximum modal width; 0 means auto.
+	CreateIcon             string  // Glyph before create modal title.
+	ListIcon               string  // Glyph before list modal title.
 }
 
 // DefaultConfig returns the built-in configuration.
 func DefaultConfig() Config {
 	return Config{
-		Colors:      DefaultColors(),
-		Placeholder: "What needs to be done?",
-		CreateIcon:  "✦",
-		ListIcon:    "✦",
+		Colors:                 DefaultColors(),
+		Placeholder:            "What needs to be done?",
+		DescriptionPlaceholder: "Add more context (optional)…",
+		PriorityPlaceholder:    "0-4 (default 2)",
+		DescriptionHeight:      6,
+		CreateIcon:             "✦",
+		ListIcon:               "✦",
 	}
 }
 
@@ -230,7 +245,9 @@ func DefaultConfig() Config {
 type KeyMap struct {
 	OpenCreate key.Binding // Open the create modal.
 	OpenList   key.Binding // Open the list modal.
-	Confirm    key.Binding // Confirm input / create bead.
+	Submit     key.Binding // Submit the create form.
+	NextField  key.Binding // Move focus to next field in create form.
+	PrevField  key.Binding // Move focus to previous field in create form.
 	Cancel     key.Binding // Close modal.
 	NextStatus key.Binding // Cycle status in list view.
 	Delete     key.Binding // Delete selected bead in list view.
@@ -241,9 +258,11 @@ type KeyMap struct {
 // DefaultKeyMap returns the built-in keybindings.
 func DefaultKeyMap() KeyMap {
 	return KeyMap{
-		OpenCreate: key.NewBinding(key.WithKeys("f7"), key.WithHelp("f7", "new bead")),
-		OpenList:   key.NewBinding(key.WithKeys("f8"), key.WithHelp("f8", "list beads")),
-		Confirm:    key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "confirm")),
+		OpenCreate: key.NewBinding(key.WithKeys("ctrl+9"), key.WithHelp("ctrl+9", "new bead")),
+		OpenList:   key.NewBinding(key.WithKeys("ctrl+0"), key.WithHelp("ctrl+0", "list beads")),
+		Submit:     key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("ctrl+s", "submit")),
+		NextField:  key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next field")),
+		PrevField:  key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev field")),
 		Cancel:     key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "close")),
 		NextStatus: key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "cycle status")),
 		Delete:     key.NewBinding(key.WithKeys("d"), key.WithHelp("d", "delete")),
@@ -262,8 +281,18 @@ type Option func(*Model)
 // WithKeyMap overrides the full keymap.
 func WithKeyMap(km KeyMap) Option { return func(m *Model) { m.keys = km } }
 
-// WithPlaceholder sets the create-modal input placeholder text.
-func WithPlaceholder(s string) Option { return func(m *Model) { m.input.Placeholder = s } }
+// WithPlaceholder sets the title input placeholder text.
+func WithPlaceholder(s string) Option { return func(m *Model) { m.titleInput.Placeholder = s } }
+
+// WithDescriptionPlaceholder sets the description textarea placeholder text.
+func WithDescriptionPlaceholder(s string) Option {
+	return func(m *Model) { m.descInput.Placeholder = s }
+}
+
+// WithPriorityPlaceholder sets the priority input placeholder text.
+func WithPriorityPlaceholder(s string) Option {
+	return func(m *Model) { m.priorityInput.Placeholder = s }
+}
 
 // WithColors overrides the color palette. Zero-value fields keep defaults.
 func WithColors(c Colors) Option {
@@ -292,7 +321,16 @@ func WithConfig(cfg Config) Option {
 		m.colors = cfg.Colors.withDefaults()
 		m.styles = buildStyles(m.colors, m.isDark)
 		if cfg.Placeholder != "" {
-			m.input.Placeholder = cfg.Placeholder
+			m.titleInput.Placeholder = cfg.Placeholder
+		}
+		if cfg.DescriptionPlaceholder != "" {
+			m.descInput.Placeholder = cfg.DescriptionPlaceholder
+		}
+		if cfg.PriorityPlaceholder != "" {
+			m.priorityInput.Placeholder = cfg.PriorityPlaceholder
+		}
+		if cfg.DescriptionHeight > 0 {
+			m.descInput.SetHeight(cfg.DescriptionHeight)
 		}
 		m.modalWidth = cfg.ModalWidth
 		if cfg.CreateIcon != "" {
@@ -311,6 +349,7 @@ func WithConfig(cfg Config) Option {
 type styles struct {
 	modal       lipgloss.Style
 	title       lipgloss.Style
+	fieldLabel  lipgloss.Style
 	selectedRow lipgloss.Style
 	statusOpen  lipgloss.Style
 	statusWIP   lipgloss.Style
@@ -338,6 +377,9 @@ func buildStyles(c Colors, isDark bool) styles {
 			Foreground(lipgloss.Color(c.Title)).
 			Bold(true).
 			MarginBottom(1),
+		fieldLabel: lipgloss.NewStyle().
+			Foreground(lipgloss.Color(c.Title)).
+			Bold(true),
 		selectedRow: lipgloss.NewStyle().Background(sel),
 		statusOpen:  lipgloss.NewStyle().Foreground(lipgloss.Color(c.StatusOpen)),
 		statusWIP:   lipgloss.NewStyle().Foreground(lipgloss.Color(c.StatusWIP)),
@@ -396,13 +438,23 @@ const (
 
 // Model is the bbt Bubble Tea component. Embed it in your application model
 // and forward messages via [Model.Update].
+// Field focus indices for the create form.
+const (
+	focusTitle = iota
+	focusDescription
+	focusPriority
+	focusFieldCount
+)
+
 type Model struct {
-	beads        []Bead
-	mode         viewMode
-	input        textinput.Model
-	cursor       int
-	createScroll int
-	keys         KeyMap
+	beads         []Bead
+	mode          viewMode
+	titleInput    textinput.Model
+	descInput     textarea.Model
+	priorityInput textinput.Model
+	createFocus   int
+	cursor        int
+	keys          KeyMap
 	colors       Colors
 	styles       styles
 	width        int
@@ -428,15 +480,32 @@ func New(opts ...Option) Model {
 	ti.SetVirtualCursor(true)
 	ti.CharLimit = 256
 
+	ta := textarea.New()
+	ta.Placeholder = "Add more context (optional)…"
+	ta.Prompt = "│ "
+	ta.ShowLineNumbers = false
+	ta.SetWidth(40)
+	ta.SetHeight(6)
+	ta.CharLimit = 4096
+
+	pi := textinput.New()
+	pi.Placeholder = "0-4 (default 2)"
+	pi.Prompt = "> "
+	pi.SetWidth(10)
+	pi.SetVirtualCursor(true)
+	pi.CharLimit = 4
+
 	c := DefaultColors()
 	m := Model{
-		keys:       DefaultKeyMap(),
-		input:      ti,
-		colors:     c,
-		isDark:     true,
-		styles:     buildStyles(c, true),
-		createIcon: "✦",
-		listIcon:   "✦",
+		keys:          DefaultKeyMap(),
+		titleInput:    ti,
+		descInput:     ta,
+		priorityInput: pi,
+		colors:        c,
+		isDark:        true,
+		styles:        buildStyles(c, true),
+		createIcon:    "✦",
+		listIcon:      "✦",
 	}
 	for _, opt := range opts {
 		opt(&m)
@@ -503,7 +572,7 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 
 	case beadCreatedMsg:
 		m.beads = append(m.beads, msg.bead)
-		m.input.SetValue("")
+		m.resetCreateFields()
 		bead := msg.bead
 		return m, func() tea.Msg { return BeadAddedMsg{Bead: bead} }
 
@@ -537,14 +606,48 @@ func (m Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 		return m.handleKey(msg)
 	}
 
-	// Forward non-key messages to textinput (cursor blink, etc.).
+	// Forward non-key messages to the focused field (cursor blink, etc.).
 	if m.mode == modeCreate && m.ready {
-		var cmd tea.Cmd
-		m.input, cmd = m.input.Update(msg)
-		return m, cmd
+		return m.forwardToFocused(msg)
 	}
 
 	return m, nil
+}
+
+func (m *Model) resetCreateFields() {
+	m.titleInput.SetValue("")
+	m.descInput.Reset()
+	m.priorityInput.SetValue("")
+	m.createFocus = focusTitle
+}
+
+func (m Model) forwardToFocused(msg tea.Msg) (Model, tea.Cmd) {
+	var cmd tea.Cmd
+	switch m.createFocus {
+	case focusTitle:
+		m.titleInput, cmd = m.titleInput.Update(msg)
+	case focusDescription:
+		m.descInput, cmd = m.descInput.Update(msg)
+	case focusPriority:
+		m.priorityInput, cmd = m.priorityInput.Update(msg)
+	}
+	return m, cmd
+}
+
+func (m *Model) focusField(idx int) tea.Cmd {
+	m.titleInput.Blur()
+	m.descInput.Blur()
+	m.priorityInput.Blur()
+	m.createFocus = idx
+	switch idx {
+	case focusTitle:
+		return m.titleInput.Focus()
+	case focusDescription:
+		return m.descInput.Focus()
+	case focusPriority:
+		return m.priorityInput.Focus()
+	}
+	return nil
 }
 
 func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
@@ -556,16 +659,14 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 			}
 			m.mode = modeCreate
 			m.errMsg = ""
-			m.createScroll = 0
 			if m.ready {
-				m.input.SetValue("")
+				m.resetCreateFields()
+				focusCmd := m.focusField(focusTitle)
 				if m.demoMode {
 					m.loading = false
-					return m, m.input.Focus()
+					return m, focusCmd
 				}
-				m.loading = true
-				cmd := m.input.Focus()
-				return m, tea.Batch(cmd, loadBeadsCmd())
+				return m, focusCmd
 			}
 			return m, nil
 
@@ -593,7 +694,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 	if key.Matches(msg, m.keys.Cancel) {
 		m.mode = modeInactive
 		m.errMsg = ""
-		m.input.Blur()
+		m.titleInput.Blur()
+		m.descInput.Blur()
+		m.priorityInput.Blur()
 		return m, nil
 	}
 
@@ -621,47 +724,55 @@ func (m Model) updateCreate(msg tea.KeyPressMsg) (Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if key.Matches(msg, m.keys.Confirm) {
-		title := strings.TrimSpace(m.input.Value())
-		if title == "" {
-			return m, nil
-		}
-		if m.demoMode {
-			b := Bead{
-				ID:     fmt.Sprintf("demo-%d", len(m.beads)+1),
-				Title:  title,
-				Status: StatusOpen,
-				Type:   "task",
-			}
-			m.beads = append(m.beads, b)
-			m.input.SetValue("")
-			return m, func() tea.Msg { return BeadAddedMsg{Bead: b} }
-		}
-		return m, func() tea.Msg {
-			b, err := bdCreate(title)
-			if err != nil {
-				return bdErrorMsg{err: err.Error()}
-			}
-			return beadCreatedMsg{bead: *b}
-		}
+	switch {
+	case key.Matches(msg, m.keys.Submit):
+		return m.submitCreate()
+
+	case key.Matches(msg, m.keys.NextField):
+		cmd := m.focusField((m.createFocus + 1) % focusFieldCount)
+		return m, cmd
+
+	case key.Matches(msg, m.keys.PrevField):
+		cmd := m.focusField((m.createFocus - 1 + focusFieldCount) % focusFieldCount)
+		return m, cmd
 	}
 
-	// Scroll existing beads list with arrow keys.
-	switch msg.String() {
-	case "up":
-		if m.createScroll > 0 {
-			m.createScroll--
-		}
-		return m, nil
-	case "down":
-		m.createScroll++
+	// Forward the key to whichever field has focus.
+	return m.forwardToFocused(msg)
+}
+
+func (m Model) submitCreate() (Model, tea.Cmd) {
+	title := strings.TrimSpace(m.titleInput.Value())
+	if title == "" {
+		m.errMsg = "Title is required"
 		return m, nil
 	}
+	description := strings.TrimSpace(m.descInput.Value())
+	priority := strings.TrimSpace(m.priorityInput.Value())
 
-	// Forward remaining keys to textinput.
-	var cmd tea.Cmd
-	m.input, cmd = m.input.Update(msg)
-	return m, cmd
+	if m.demoMode {
+		b := Bead{
+			ID:     fmt.Sprintf("demo-%d", len(m.beads)+1),
+			Title:  title,
+			Status: StatusOpen,
+			Type:   "task",
+		}
+		if priority != "" {
+			if n, err := strconv.Atoi(priority); err == nil {
+				b.Priority = n
+			}
+		}
+		m.beads = append(m.beads, b)
+		m.resetCreateFields()
+		return m, func() tea.Msg { return BeadAddedMsg{Bead: b} }
+	}
+	return m, func() tea.Msg {
+		b, err := bdCreate(title, description, priority)
+		if err != nil {
+			return bdErrorMsg{err: err.Error()}
+		}
+		return beadCreatedMsg{bead: *b}
+	}
 }
 
 func (m Model) updateList(msg tea.KeyPressMsg) (Model, tea.Cmd) {
@@ -783,7 +894,7 @@ func (m Model) capWidth(preferred, maxWidth int) int {
 }
 
 func (m Model) viewCreate(maxWidth int) string {
-	w := m.capWidth(55, maxWidth)
+	w := m.capWidth(60, maxWidth)
 	var b strings.Builder
 
 	b.WriteString(m.styles.title.Render(m.createIcon + " New Bead"))
@@ -805,56 +916,29 @@ func (m Model) viewCreate(maxWidth int) string {
 		b.WriteString("\n")
 	}
 
-	b.WriteString(m.input.View())
+	// Title field.
+	b.WriteString(m.styles.fieldLabel.Render("Title"))
+	b.WriteString("\n")
+	b.WriteString(m.titleInput.View())
+	b.WriteString("\n\n")
+
+	// Description field — generous multi-line space.
+	b.WriteString(m.styles.fieldLabel.Render("Description"))
+	b.WriteString("\n")
+	b.WriteString(m.descInput.View())
+	b.WriteString("\n\n")
+
+	// Priority field.
+	b.WriteString(m.styles.fieldLabel.Render("Priority"))
+	b.WriteString("\n")
+	b.WriteString(m.priorityInput.View())
 	b.WriteString("\n")
 
-	// Existing beads below input.
-	if m.loading {
-		b.WriteString(m.styles.dimmed.Render("  Loading..."))
-	} else if len(m.beads) > 0 {
-		var nOpen, nWIP, nClosed int
-		for _, bead := range m.beads {
-			switch bead.Status {
-			case StatusOpen:
-				nOpen++
-			case StatusInProgress:
-				nWIP++
-			case StatusClosed:
-				nClosed++
-			}
-		}
-		b.WriteString("\n")
-		b.WriteString(m.styles.dimmed.Render(
-			fmt.Sprintf("  %d beads (%d open, %d wip, %d done)", len(m.beads), nOpen, nWIP, nClosed),
-		))
-		b.WriteString("\n")
-
-		maxVisible := clamp((m.height-16), 4, 12)
-		start := m.createScroll
-		if start > len(m.beads)-maxVisible {
-			start = max(0, len(m.beads)-maxVisible)
-		}
-		end := start + maxVisible
-		if end > len(m.beads) {
-			end = len(m.beads)
-		}
-
-		if start > 0 {
-			b.WriteString(m.styles.dimmed.Render("  ↑ more"))
-			b.WriteString("\n")
-		}
-		for i := start; i < end; i++ {
-			bead := m.beads[i]
-			ss := m.styles.statusStyle(bead.Status)
-			b.WriteString(fmt.Sprintf("  %s %s\n", ss.Render(statusIcon(bead.Status)), bead.Title))
-		}
-		if end < len(m.beads) {
-			b.WriteString(m.styles.dimmed.Render("  ↓ more"))
-		}
-	}
-
-	b.WriteString("\n")
-	b.WriteString(m.styles.help.Render("enter: add  •  ↑↓: scroll  •  esc: close"))
+	b.WriteString(m.styles.help.Render(
+		m.keys.NextField.Help().Key + "/" + m.keys.PrevField.Help().Key + ": fields  •  " +
+			m.keys.Submit.Help().Key + ": submit  •  " +
+			m.keys.Cancel.Help().Key + ": close",
+	))
 	return m.styles.modal.Width(w).Render(b.String())
 }
 
