@@ -258,8 +258,8 @@ type KeyMap struct {
 // DefaultKeyMap returns the built-in keybindings.
 func DefaultKeyMap() KeyMap {
 	return KeyMap{
-		OpenCreate: key.NewBinding(key.WithKeys("ctrl+9"), key.WithHelp("ctrl+9", "new bead")),
-		OpenList:   key.NewBinding(key.WithKeys("ctrl+0"), key.WithHelp("ctrl+0", "list beads")),
+		OpenCreate: key.NewBinding(key.WithKeys("ctrl+9", "f7"), key.WithHelp("ctrl+9/f7", "new bead")),
+		OpenList:   key.NewBinding(key.WithKeys("ctrl+0", "f8"), key.WithHelp("ctrl+0/f8", "list beads")),
 		Submit:     key.NewBinding(key.WithKeys("ctrl+s"), key.WithHelp("ctrl+s", "submit")),
 		NextField:  key.NewBinding(key.WithKeys("tab"), key.WithHelp("tab", "next field")),
 		PrevField:  key.NewBinding(key.WithKeys("shift+tab"), key.WithHelp("shift+tab", "prev field")),
